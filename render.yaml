@@ -21,7 +21,6 @@ services:
   - type: web
     name: taskflow-frontend
     env: static
-    region: ohio
     # The commands Render will run to build your React code
     buildCommand: cd web && npm install && npm run build
     staticPublishPath: ./web/dist
