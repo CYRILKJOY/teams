@@ -1,0 +1,36 @@
+services:
+  # ----------------------------------------------------
+  # 1. Backend API Service
+  # ----------------------------------------------------
+  - type: web
+    name: taskflow-backend
+    env: node
+    region: ohio
+    # The commands Render will run to build and start your Node.js API
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      
+  # ----------------------------------------------------
+  # 2. Frontend React Website (Static Site)
+  # ----------------------------------------------------
+  - type: web
+    name: taskflow-frontend
+    env: static
+    region: ohio
+    # The commands Render will run to build your React code
+    buildCommand: cd web && npm install && npm run build
+    staticPublishPath: ./web/dist
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: VITE_API_URL
+        fromService:
+          type: web
+          name: taskflow-backend
+          envVarKey: RENDER_EXTERNAL_URL
+        # This tells the frontend where the backend lives on the internet dynamically!

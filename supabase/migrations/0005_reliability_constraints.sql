@@ -2,5 +2,5 @@
 -- Using a unique index on the date expression ensures idempotency at the database level against race conditions.
 
 CREATE UNIQUE INDEX idx_notifications_daily_review_idempotency 
-ON notifications (employee_id, type, (created_at::date))
+ON notifications (employee_id, type, ((created_at AT TIME ZONE 'UTC')::date))
 WHERE type IN ('MORNING_REVIEW', 'EVENING_REVIEW');

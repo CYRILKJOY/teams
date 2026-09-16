@@ -18,7 +18,7 @@ import dashboardsRoutes from './routes/v1/dashboards.routes.js';
 import reportsRoutes from './routes/v1/reports.routes.js';
 
 const fastify = Fastify({
-  logger,
+  loggerInstance: logger,
   // Add 431 Request Header Fields Too Large handler support for large tokens
   maxParamLength: 1000
 });
