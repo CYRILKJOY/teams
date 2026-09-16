@@ -1,4 +1,5 @@
 import { useEffect } from 'react';
+import type { ReactNode } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { useAuthStore } from './store/auth';
 import Login from './pages/Login';
@@ -6,7 +7,7 @@ import EmployeeDashboard from './pages/EmployeeDashboard';
 import ManagerDashboard from './pages/ManagerDashboard';
 import Layout from './components/Layout';
 
-function ProtectedRoute({ children, allowedRoles }: { children: JSX.Element, allowedRoles: string[] }) {
+function ProtectedRoute({ children, allowedRoles }: { children: ReactNode, allowedRoles: string[] }) {
   const { isAuthenticated, user, isLoading } = useAuthStore();
 
   if (isLoading) return <div className="flex-center" style={{ height: '100vh' }}><div className="spinner"></div></div>;
