@@ -1,0 +1,44 @@
+name: TaskFlow CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build_and_test:
+    name: Build & Test
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Lint Code
+        run: npm run lint
+
+      - name: Typecheck & Build
+        run: npm run build
+
+      - name: Run Tests
+        # Ensure tests pass before any deployment can be triggered
+        run: npm test
+        env:
+          NODE_ENV: test
+          JWT_SECRET: ci-test-secret-123
+          SUPABASE_URL: https://test.supabase.co
+          SUPABASE_SERVICE_ROLE_KEY: test-key
+          CLICKUP_WEBHOOK_SECRET: ci-webhook-secret
+          CLICKUP_API_TOKEN: ci-api-token
+          TEAMS_INBOUND_WEBHOOK_SECRET: ci-teams-secret
+          PORT: 3000
