@@ -33,21 +33,24 @@ export class TaskRepository {
     return data;
   }
 
-  static async getTasksForEmployee(employeeId: string): Promise<Task[]> {
-    // Note: A proper enterprise approach might use an inner join view or RPC
-    // Since Supabase JS client doesn't support direct joins that flatten nicely out of the box,
-    // we query task_assignments and then tasks, or use the syntax: tasks!inner(task_assignments!inner())
+  static async getTasksForEmployee(employeeId: string): Promise<(Task & { acknowledgement_status?: string | null })[]> {
     const { data, error } = await supabase
       .from('tasks')
-      .select('*, task_assignments!inner(employee_id)')
+      .select('*, task_assignments!inner(id, employee_id, acknowledgements(response))')
       .eq('task_assignments.employee_id', employeeId);
 
     if (error) throw error;
-    // Map to remove the joined field from the result to match Task interface
-    return (data || []).map((t: Record<string, unknown>) => {
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    
+    return (data || []).map((t: any) => {
       const { task_assignments, ...task } = t;
-      return task as unknown as Task;
+      let acknowledgement_status = null;
+      if (task_assignments && task_assignments.length > 0) {
+        const assignment = task_assignments[0];
+        if (assignment.acknowledgements && assignment.acknowledgements.length > 0) {
+          acknowledgement_status = assignment.acknowledgements[0].response;
+        }
+      }
+      return { ...task, acknowledgement_status } as Task & { acknowledgement_status?: string | null };
     });
   }
 }

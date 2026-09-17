@@ -97,6 +97,7 @@ export default async function dashboardsRoutes(fastify: FastifyInstance) {
           return {
             id: emp.id,
             user_id: emp.user_id,
+            display_name: emp.display_name,
             microsoft_id: emp.microsoft_id,
             clickup_id: emp.clickup_id,
             reviews: { morning, evening },
