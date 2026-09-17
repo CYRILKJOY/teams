@@ -15,12 +15,24 @@ export class WebhookProcessor {
     // 1. Fetch latest task data from ClickUp
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const clickUpTask = (await ClickUpClient.getTask(taskId)) as any;
+    
+    // Resolve internal Workspace UUID
+    const clickupWorkspaceId = clickUpTask.team_id?.toString() || clickUpTask.space?.id || 'unknown';
+    const { data: workspace, error: wsError } = await import('../supabase.js').then(m => m.supabase
+      .from('clickup_workspaces')
+      .select('id')
+      .eq('clickup_workspace_id', clickupWorkspaceId)
+      .single());
+      
+    if (wsError || !workspace) {
+      logger.error({ clickupWorkspaceId }, 'Workspace not mapped in TaskFlow database. Ignoring task.');
+      return;
+    }
 
     // 2. Map and Upsert Task
     const mappedTask = {
       clickup_task_id: clickUpTask.id,
-      workspace_id:
-        clickUpTask.list?.id || clickUpTask.folder?.id || clickUpTask.space?.id || 'unknown',
+      workspace_id: workspace.id,
       name: clickUpTask.name,
       description: clickUpTask.description || null,
       status: clickUpTask.status?.status || 'Open',
