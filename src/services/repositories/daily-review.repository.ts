@@ -37,4 +37,14 @@ export class DailyReviewRepository {
     if (error && error.code !== 'PGRST116') throw error;
     return data;
   }
+
+  static async findAllByEmployeeId(employeeId: string): Promise<DailyReview[]> {
+    const { data, error } = await supabase
+      .from('daily_reviews')
+      .select('*')
+      .eq('employee_id', employeeId);
+
+    if (error) throw error;
+    return data || [];
+  }
 }

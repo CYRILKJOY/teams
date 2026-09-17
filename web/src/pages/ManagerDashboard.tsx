@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react';
-import { api } from '../api';
-import { Users, AlertTriangle, CheckCircle2, Clock, Moon, Sun, CheckSquare, XCircle, HelpCircle } from 'lucide-react';
-import { format, isToday, isFuture, isPast } from 'date-fns';
+import { useState } from 'react';
+import { useOutletContext, useSearchParams, useNavigate } from 'react-router-dom';
+import { AlertTriangle, CheckCircle2, Clock, Moon, Sun, CheckSquare, XCircle, HelpCircle, Users } from 'lucide-react';
+import { format, eachDayOfInterval, parseISO } from 'date-fns';
 
 interface Task {
   id: string;
@@ -9,7 +9,15 @@ interface Task {
   due_date: string | null;
   name: string;
   clickup_task_id: string;
+  created_at: string;
   acknowledgement_status?: string | null;
+}
+
+interface DailyReview {
+  id: string;
+  date: string;
+  type: 'MORNING' | 'EVENING';
+  response: string;
 }
 
 interface TeamMember {
@@ -18,7 +26,7 @@ interface TeamMember {
   display_name: string;
   microsoft_id: string | null;
   clickup_id: string | null;
-  reviews: { morning: any; evening: any };
+  reviews: DailyReview[];
   tasks: Task[];
 }
 
@@ -28,98 +36,81 @@ interface ManagerData {
   timezone: string;
 }
 
+interface OutletContextType {
+  managerData: ManagerData | null;
+  isLoading: boolean;
+  error: string;
+}
+
 export default function ManagerDashboard() {
-  const [data, setData] = useState<ManagerData | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState('');
-  const [activeTab, setActiveTab] = useState<'tasks' | 'employees'>('tasks');
-
-  useEffect(() => {
-    let mounted = true;
-
-    const fetchData = async () => {
-      try {
-        const response = await api.get<ManagerData>('/dashboards/manager');
-        if (mounted) {
-          setData(response);
-          setIsLoading(false);
-        }
-      } catch (err: unknown) {
-        if (mounted) {
-          if (err instanceof Error) {
-            setError(err.message);
-          } else {
-            setError('Failed to load team data');
-          }
-          setIsLoading(false);
-        }
-      }
-    };
-
-    fetchData();
-
-    return () => {
-      mounted = false;
-    };
-  }, []);
+  const { managerData, isLoading, error } = useOutletContext<OutletContextType>();
+  const [searchParams] = useSearchParams();
+  const selectedEmployeeId = searchParams.get('employeeId');
+  const navigate = useNavigate();
 
   if (isLoading) return <div className="flex-center" style={{ height: '100%' }}><div className="spinner"></div></div>;
   if (error) return <div className="badge badge-danger p-4">{error}</div>;
-  if (!data) return null;
-
-  // Calculate aggregates
-  let totalTasks = 0;
-  let overdueTasksCount = 0;
-  let completedMorningReviews = 0;
-  let completedEveningReviews = 0;
-
-  const allTasks: (Task & { employeeName: string; employeeMorning: boolean; employeeEvening: boolean })[] = [];
-
-  data.team.forEach(emp => {
-    const hasMorning = !!emp.reviews.morning;
-    const hasEvening = !!emp.reviews.evening;
-    
-    if (hasMorning) completedMorningReviews++;
-    if (hasEvening) completedEveningReviews++;
-
-    emp.tasks.forEach(t => {
-      totalTasks++;
-      const isOverdue = t.due_date && t.status.toLowerCase() !== 'closed' && new Date(t.due_date) < new Date();
-      if (isOverdue) overdueTasksCount++;
-
-      allTasks.push({
-        ...t,
-        employeeName: emp.display_name || `Employee ${emp.id.substring(0, 8)}`,
-        employeeMorning: hasMorning,
-        employeeEvening: hasEvening
-      });
-    });
-  });
-
-  const todayTasks = allTasks.filter(t => t.due_date && isToday(new Date(t.due_date)));
-  const upcomingTasks = allTasks.filter(t => t.due_date && isFuture(new Date(t.due_date)));
-  const overdueTasksList = allTasks.filter(t => t.due_date && isPast(new Date(t.due_date)) && !isToday(new Date(t.due_date)) && t.status.toLowerCase() !== 'closed');
-  
-  const noDueDateTasks = allTasks.filter(t => !t.due_date);
+  if (!managerData) return null;
 
   const getAcknowledgementBadge = (status?: string | null) => {
-    if (!status) return <span className="badge badge-default">Not Acknowledged</span>;
-    if (status === 'SEEN_WILL_COMPLETE') return <span className="badge badge-success" style={{ display: 'inline-flex', alignItems: 'center' }}><CheckSquare size={12} style={{ marginRight: '4px' }}/> Will Complete</span>;
+    if (!status) return <span className="badge badge-default">Notification Not Accepted</span>;
+    if (status === 'SEEN_WILL_COMPLETE') return <span className="badge badge-success" style={{ display: 'inline-flex', alignItems: 'center' }}><CheckSquare size={12} style={{ marginRight: '4px' }}/> Accepted</span>;
     if (status === 'SEEN_NEED_CLARIFICATION') return <span className="badge badge-warning" style={{ display: 'inline-flex', alignItems: 'center' }}><HelpCircle size={12} style={{ marginRight: '4px' }}/> Needs Clarification</span>;
     if (status === 'CANNOT_COMPLETE') return <span className="badge badge-danger" style={{ display: 'inline-flex', alignItems: 'center' }}><XCircle size={12} style={{ marginRight: '4px' }}/> Cannot Complete</span>;
     return <span className="badge badge-default">{status}</span>;
   };
 
-  return (
-    <div className="animate-fade-in flex-column gap-6">
-      <div>
-        <h1 style={{ marginBottom: '0.25rem' }}>Team Dashboard</h1>
-        <p>Overview for {format(new Date(data.date), 'MMMM d, yyyy')}</p>
-      </div>
+  const computePendingReviews = (taskCreatedAt: string, allReviews: DailyReview[]) => {
+    try {
+      const today = new Date(managerData.date);
+      const start = parseISO(taskCreatedAt);
+      
+      // If task created in the future (timezone diffs), no pending reviews
+      if (start > today) return { pendingMorning: 0, pendingEvening: 0 };
+      
+      const days = eachDayOfInterval({ start, end: today });
+      
+      let pendingMorning = 0;
+      let pendingEvening = 0;
+      
+      days.forEach(day => {
+        const dayStr = format(day, 'yyyy-MM-dd');
+        const hasMorning = allReviews.some(r => r.date === dayStr && r.type === 'MORNING');
+        const hasEvening = allReviews.some(r => r.date === dayStr && r.type === 'EVENING');
+        
+        if (!hasMorning) pendingMorning++;
+        if (!hasEvening) pendingEvening++;
+      });
+      
+      return { pendingMorning, pendingEvening };
+    } catch (e) {
+      return { pendingMorning: 0, pendingEvening: 0 };
+    }
+  };
 
-      {/* Stats Cards */}
-      <div className="grid-cols-4">
-        <div className="glass-card" style={{ padding: '1.5rem' }}>
+  const renderTeamStats = () => {
+    let totalTasks = 0;
+    let overdueTasksCount = 0;
+    let completedMorningReviews = 0;
+    let completedEveningReviews = 0;
+
+    managerData.team.forEach(emp => {
+      const hasMorning = emp.reviews.some(r => r.date === managerData.date && r.type === 'MORNING');
+      const hasEvening = emp.reviews.some(r => r.date === managerData.date && r.type === 'EVENING');
+      
+      if (hasMorning) completedMorningReviews++;
+      if (hasEvening) completedEveningReviews++;
+
+      emp.tasks.forEach(t => {
+        totalTasks++;
+        const isOverdue = t.due_date && t.status.toLowerCase() !== 'closed' && new Date(t.due_date) < new Date();
+        if (isOverdue) overdueTasksCount++;
+      });
+    });
+
+    return (
+      <div className="grid-cols-4 mb-6">
+        <div className="glass-card" style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column' }}>
           <div className="flex-between" style={{ marginBottom: '1rem' }}>
             <h3 style={{ fontSize: '1rem', color: 'var(--text-secondary)' }}>Total Open Tasks</h3>
             <div style={{ padding: '0.5rem', background: 'rgba(99, 102, 241, 0.1)', borderRadius: '8px' }}>
@@ -129,7 +120,7 @@ export default function ManagerDashboard() {
           <p style={{ fontSize: '2rem', fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>{totalTasks}</p>
         </div>
         
-        <div className="glass-card" style={{ padding: '1.5rem' }}>
+        <div className="glass-card" style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column' }}>
           <div className="flex-between" style={{ marginBottom: '1rem' }}>
             <h3 style={{ fontSize: '1rem', color: 'var(--text-secondary)' }}>Overdue Tasks</h3>
             <div style={{ padding: '0.5rem', background: 'rgba(239, 68, 68, 0.1)', borderRadius: '8px' }}>
@@ -139,177 +130,178 @@ export default function ManagerDashboard() {
           <p style={{ fontSize: '2rem', fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>{overdueTasksCount}</p>
         </div>
 
-        <div className="glass-card" style={{ padding: '1.5rem' }}>
+        <div className="glass-card" style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', height: '100%' }}>
           <div className="flex-between" style={{ marginBottom: '1rem' }}>
-            <h3 style={{ fontSize: '1rem', color: 'var(--text-secondary)' }}>Morning Reviews</h3>
+            <h3 style={{ fontSize: '1rem', color: 'var(--text-secondary)' }}>Today's Morning</h3>
             <div style={{ padding: '0.5rem', background: 'rgba(16, 185, 129, 0.1)', borderRadius: '8px' }}>
               <Sun size={20} color="var(--success-color)" />
             </div>
           </div>
-          <p style={{ fontSize: '2rem', fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>
-            {completedMorningReviews} <span style={{ fontSize: '1rem', color: 'var(--text-muted)' }}>/ {data.team.length}</span>
+          <p style={{ fontSize: '1.75rem', fontWeight: 700, color: 'var(--text-primary)', margin: '0 0 1rem 0' }}>
+            {completedMorningReviews} <span style={{ fontSize: '1rem', color: 'var(--text-muted)' }}>/ {managerData.team.length}</span>
           </p>
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '0.5rem', overflowY: 'auto', maxHeight: '120px' }}>
+            {managerData.team.filter(emp => emp.reviews.some(r => r.date === managerData.date && r.type === 'MORNING')).length === 0 ? (
+              <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>No reviews yet</span>
+            ) : (
+              managerData.team.filter(emp => emp.reviews.some(r => r.date === managerData.date && r.type === 'MORNING')).map(emp => (
+                <div key={emp.id} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <div style={{ width: '20px', height: '20px', borderRadius: '50%', background: 'var(--success-color)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.6rem', color: 'white', fontWeight: 'bold' }}>
+                    {emp.display_name ? emp.display_name.charAt(0).toUpperCase() : 'E'}
+                  </div>
+                  <span style={{ fontSize: '0.85rem', fontWeight: 500 }}>{emp.display_name}</span>
+                </div>
+              ))
+            )}
+          </div>
         </div>
 
-        <div className="glass-card" style={{ padding: '1.5rem' }}>
+        <div className="glass-card" style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', height: '100%' }}>
           <div className="flex-between" style={{ marginBottom: '1rem' }}>
-            <h3 style={{ fontSize: '1rem', color: 'var(--text-secondary)' }}>Evening Reviews</h3>
+            <h3 style={{ fontSize: '1rem', color: 'var(--text-secondary)' }}>Today's Evening</h3>
             <div style={{ padding: '0.5rem', background: 'rgba(99, 102, 241, 0.1)', borderRadius: '8px' }}>
               <Moon size={20} color="var(--primary-color)" />
             </div>
           </div>
-          <p style={{ fontSize: '2rem', fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>
-            {completedEveningReviews} <span style={{ fontSize: '1rem', color: 'var(--text-muted)' }}>/ {data.team.length}</span>
+          <p style={{ fontSize: '1.75rem', fontWeight: 700, color: 'var(--text-primary)', margin: '0 0 1rem 0' }}>
+            {completedEveningReviews} <span style={{ fontSize: '1rem', color: 'var(--text-muted)' }}>/ {managerData.team.length}</span>
           </p>
-        </div>
-      </div>
-
-      <div style={{ display: 'flex', gap: '1rem', borderBottom: '1px solid var(--border-light)', paddingBottom: '0.5rem' }}>
-        <button 
-          onClick={() => setActiveTab('tasks')}
-          style={{ 
-            padding: '0.5rem 1rem', 
-            borderRadius: 'var(--radius-md)', 
-            background: activeTab === 'tasks' ? 'var(--primary-color)' : 'transparent', 
-            color: activeTab === 'tasks' ? 'white' : 'var(--text-secondary)',
-            border: 'none', 
-            cursor: 'pointer',
-            fontWeight: 500,
-            transition: 'all 0.2s'
-          }}
-        >
-          Tasks View
-        </button>
-        <button 
-          onClick={() => setActiveTab('employees')}
-          style={{ 
-            padding: '0.5rem 1rem', 
-            borderRadius: 'var(--radius-md)', 
-            background: activeTab === 'employees' ? 'var(--primary-color)' : 'transparent', 
-            color: activeTab === 'employees' ? 'white' : 'var(--text-secondary)',
-            border: 'none', 
-            cursor: 'pointer',
-            fontWeight: 500,
-            transition: 'all 0.2s'
-          }}
-        >
-          Employees View
-        </button>
-      </div>
-
-      {activeTab === 'tasks' && (
-        <div className="flex-column gap-6">
-          <TaskGroup title="Overdue Tasks" tasks={overdueTasksList} type="danger" />
-          <TaskGroup title="Today's Tasks" tasks={todayTasks} type="primary" />
-          <TaskGroup title="Upcoming Tasks" tasks={upcomingTasks} type="default" />
-          <TaskGroup title="No Due Date" tasks={noDueDateTasks} type="default" />
-        </div>
-      )}
-
-      {activeTab === 'employees' && (
-        <div className="flex-column gap-6">
-          {data.team.map(emp => (
-            <div key={emp.id} className="glass-card" style={{ overflow: 'hidden' }}>
-              <div style={{ padding: '1.5rem', background: 'rgba(255,255,255,0.02)', borderBottom: '1px solid var(--border-light)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-                  <div style={{ width: '40px', height: '40px', borderRadius: '50%', background: 'var(--bg-secondary)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 600 }}>
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '0.5rem', overflowY: 'auto', maxHeight: '120px' }}>
+            {managerData.team.filter(emp => emp.reviews.some(r => r.date === managerData.date && r.type === 'EVENING')).length === 0 ? (
+              <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>No reviews yet</span>
+            ) : (
+              managerData.team.filter(emp => emp.reviews.some(r => r.date === managerData.date && r.type === 'EVENING')).map(emp => (
+                <div key={emp.id} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <div style={{ width: '20px', height: '20px', borderRadius: '50%', background: 'var(--primary-color)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.6rem', color: 'white', fontWeight: 'bold' }}>
                     {emp.display_name ? emp.display_name.charAt(0).toUpperCase() : 'E'}
                   </div>
-                  <div>
-                    <h3 style={{ margin: 0, fontSize: '1.1rem' }}>{emp.display_name || `Employee ${emp.id.substring(0, 8)}`}</h3>
-                    <p style={{ margin: 0, fontSize: '0.85rem', color: 'var(--text-muted)' }}>{emp.tasks.length} assigned tasks</p>
-                  </div>
+                  <span style={{ fontSize: '0.85rem', fontWeight: 500 }}>{emp.display_name}</span>
                 </div>
-                <div style={{ display: 'flex', gap: '1.5rem' }}>
-                  <div className="flex-column" style={{ alignItems: 'flex-end', gap: '0.25rem' }}>
-                    <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', textTransform: 'uppercase', display: 'flex', alignItems: 'center', gap: '4px' }}><Sun size={12}/> Morning</span>
-                    {emp.reviews.morning ? <span className="badge badge-success">Reviewed</span> : <span className="badge badge-warning">Pending</span>}
-                  </div>
-                  <div className="flex-column" style={{ alignItems: 'flex-end', gap: '0.25rem' }}>
-                    <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', textTransform: 'uppercase', display: 'flex', alignItems: 'center', gap: '4px' }}><Moon size={12}/> Evening</span>
-                    {emp.reviews.evening ? <span className="badge badge-success">Reviewed</span> : <span className="badge badge-warning">Pending</span>}
-                  </div>
-                </div>
-              </div>
-              
-              <div style={{ padding: '1.5rem' }}>
-                {emp.tasks.length === 0 ? (
-                  <p style={{ color: 'var(--text-muted)', margin: 0, fontSize: '0.9rem' }}>No tasks assigned.</p>
-                ) : (
-                  <div className="flex-column gap-3">
-                    {emp.tasks.map(task => (
-                      <div key={task.id} style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', padding: '1rem', background: 'var(--bg-input)', borderRadius: 'var(--radius-md)', border: '1px solid rgba(255,255,255,0.05)' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-                            <span style={{ fontWeight: 600, fontSize: '1rem' }}>{task.name}</span>
-                            <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>ClickUp Task: #{task.clickup_task_id}</span>
-                          </div>
-                          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                            {getAcknowledgementBadge(task.acknowledgement_status)}
-                            <span className="badge badge-default" style={{ fontSize: '0.75rem' }}>{task.status}</span>
-                          </div>
-                        </div>
-                        <div style={{ display: 'flex', gap: '1rem', alignItems: 'center', fontSize: '0.85rem', color: 'var(--text-muted)', marginTop: '0.5rem' }}>
-                          {task.due_date ? 
-                            <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}><Clock size={14}/> Due: {format(new Date(task.due_date), 'MMM d, yyyy')}</span> 
-                            : <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}><Clock size={14}/> No due date</span>
-                          }
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-
-  function TaskGroup({ title, tasks, type }: { title: string, tasks: any[], type: string }) {
-    if (tasks.length === 0) return null;
-    
-    return (
-      <div className="glass-card" style={{ padding: '1.5rem', borderLeft: type === 'danger' ? '4px solid var(--danger-color)' : type === 'primary' ? '4px solid var(--primary-color)' : 'none' }}>
-        <h3 style={{ margin: '0 0 1rem 0', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-          {title} <span className="badge badge-default">{tasks.length}</span>
-        </h3>
-        <div className="flex-column gap-3">
-          {tasks.map(task => (
-            <div key={task.id} style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', padding: '1rem', background: 'var(--bg-input)', borderRadius: 'var(--radius-md)' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-                  <span style={{ fontWeight: 600, fontSize: '1rem' }}>{task.name}</span>
-                  <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}><Users size={12} style={{ display: 'inline', marginRight: '4px' }}/> {task.employeeName}</span>
-                </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', alignItems: 'flex-end' }}>
-                  <div style={{ display: 'flex', gap: '0.5rem' }}>
-                    <span className="badge badge-default">{task.status}</span>
-                  </div>
-                  <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                     <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>ClickUp: #{task.clickup_task_id}</span>
-                  </div>
-                </div>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '0.5rem', paddingTop: '0.5rem', borderTop: '1px solid rgba(255,255,255,0.05)' }}>
-                <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                  <Clock size={14}/> {task.due_date ? format(new Date(task.due_date), 'MMM d, yyyy') : 'None'}
-                </div>
-                <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
-                  <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Reviews:</span>
-                  <span title="Morning Review" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '24px', height: '24px', borderRadius: '50%', background: task.employeeMorning ? 'rgba(16, 185, 129, 0.1)' : 'rgba(255,255,255,0.05)' }}>
-                    <Sun size={14} color={task.employeeMorning ? 'var(--success-color)' : 'var(--text-muted)'} />
-                  </span>
-                  <span title="Evening Review" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '24px', height: '24px', borderRadius: '50%', background: task.employeeEvening ? 'rgba(99, 102, 241, 0.1)' : 'rgba(255,255,255,0.05)' }}>
-                    <Moon size={14} color={task.employeeEvening ? 'var(--primary-color)' : 'var(--text-muted)'} />
-                  </span>
-                </div>
-              </div>
-            </div>
-          ))}
+              ))
+            )}
+          </div>
         </div>
       </div>
     );
-  }
+  };
+
+  const selectedEmployee = managerData.team.find(emp => emp.id === selectedEmployeeId);
+
+  return (
+    <div className="animate-fade-in flex-column gap-6">
+      <div>
+        <h1 style={{ marginBottom: '0.25rem' }}>Manager Dashboard</h1>
+        <p>Overview for {format(new Date(managerData.date), 'MMMM d, yyyy')}</p>
+      </div>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+        {!selectedEmployeeId ? (
+          <div className="animate-fade-in">
+            {renderTeamStats()}
+            <div className="glass-card" style={{ padding: '3rem', textAlign: 'center', color: 'var(--text-muted)' }}>
+              <Users size={48} style={{ margin: '0 auto 1rem auto', opacity: 0.5 }} />
+              <h3>Select an employee from the sidebar</h3>
+              <p>Click on an employee in the main navigation sidebar to view their specific tasks and historical review tracking.</p>
+            </div>
+          </div>
+        ) : (
+          <div className="animate-fade-in flex-column gap-6">
+            <div className="glass-card" style={{ padding: '1.5rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <h2 style={{ margin: '0 0 0.5rem 0', display: 'flex', alignItems: 'center', gap: '12px' }}>
+                  <div style={{ width: '48px', height: '48px', borderRadius: '50%', background: 'var(--primary-color)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 600, color: 'white', fontSize: '1.25rem' }}>
+                    {selectedEmployee?.display_name ? selectedEmployee.display_name.charAt(0).toUpperCase() : 'E'}
+                  </div>
+                  {selectedEmployee?.display_name}
+                </h2>
+                <p style={{ margin: 0, color: 'var(--text-muted)' }}>{selectedEmployee?.email || `ID: ${selectedEmployee?.id.substring(0, 8)}`}</p>
+              </div>
+              <div style={{ display: 'flex', gap: '2rem', textAlign: 'right' }}>
+                <div>
+                  <div style={{ fontSize: '1.5rem', fontWeight: 700, color: 'var(--danger-color)' }}>
+                    {selectedEmployee?.tasks.filter(t => t.due_date && t.status.toLowerCase() !== 'closed' && new Date(t.due_date) < new Date()).length || 0}
+                  </div>
+                  <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Overdue Tasks</div>
+                </div>
+                <div>
+                  <div style={{ fontSize: '1.5rem', fontWeight: 700, color: 'var(--text-primary)' }}>{selectedEmployee?.tasks.length}</div>
+                  <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Total Tasks Assigned</div>
+                </div>
+              </div>
+            </div>
+
+            {selectedEmployee?.tasks.length === 0 ? (
+              <div className="glass-card" style={{ padding: '3rem', textAlign: 'center', color: 'var(--text-muted)' }}>
+                <CheckCircle2 size={48} style={{ margin: '0 auto 1rem auto', opacity: 0.5, color: 'var(--success-color)' }} />
+                <h3>No tasks assigned</h3>
+                <p>This employee currently has no tasks.</p>
+              </div>
+            ) : (
+              <div className="flex-column gap-4">
+                {selectedEmployee?.tasks.map(task => {
+                  const { pendingMorning, pendingEvening } = computePendingReviews(task.created_at, selectedEmployee.reviews);
+                  
+                  return (
+                    <div 
+                      key={task.id} 
+                      className="glass-card" 
+                      onClick={() => navigate(`/manager/task/${task.id}`)}
+                      style={{ 
+                        display: 'flex', 
+                        flexDirection: 'column', 
+                        gap: '1rem', 
+                        padding: '1.5rem', 
+                        transition: 'all 0.2s', 
+                        borderLeft: (pendingMorning > 0 || pendingEvening > 0) ? '3px solid var(--warning-color)' : '3px solid var(--success-color)',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                          <span style={{ fontWeight: 600, fontSize: '1.1rem' }}>{task.name}</span>
+                          <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <span>ClickUp Task: #{task.clickup_task_id}</span>
+                            <span>&bull;</span>
+                            <span>Created: {format(new Date(task.created_at), 'MMM d, yyyy')}</span>
+                          </span>
+                        </div>
+                        <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
+                          {getAcknowledgementBadge(task.acknowledgement_status)}
+                          <span className="badge badge-default" style={{ fontSize: '0.85rem' }}>{task.status}</span>
+                        </div>
+                      </div>
+
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '0.5rem', paddingTop: '1rem', borderTop: '1px solid rgba(255,255,255,0.05)' }}>
+                        <div style={{ fontSize: '0.9rem', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <Clock size={16}/> 
+                          {task.due_date ? 
+                             <span style={{ color: new Date(task.due_date) < new Date() && task.status !== 'closed' ? 'var(--danger-color)' : 'inherit' }}>
+                               Due: {format(new Date(task.due_date), 'MMM d, yyyy')}
+                             </span> 
+                             : 'No due date'}
+                        </div>
+                        
+                        <div style={{ display: 'flex', gap: '1.5rem', alignItems: 'center', background: 'var(--bg-input)', padding: '0.5rem 1rem', borderRadius: 'var(--radius-sm)' }}>
+                          <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', fontWeight: 500 }}>Missing Reviews (Since Creation):</span>
+                          <span style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.9rem', color: pendingMorning > 0 ? 'var(--warning-color)' : 'var(--success-color)', fontWeight: 500 }}>
+                            <Sun size={16} /> {pendingMorning} Morning
+                          </span>
+                          <span style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.9rem', color: pendingEvening > 0 ? 'var(--warning-color)' : 'var(--success-color)', fontWeight: 500 }}>
+                            <Moon size={16} /> {pendingEvening} Evening
+                          </span>
+                          <span style={{ fontSize: '0.8rem', color: 'var(--primary-color)', marginLeft: '1rem' }}>
+                            View Details →
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
 }

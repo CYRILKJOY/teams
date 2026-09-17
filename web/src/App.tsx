@@ -5,6 +5,7 @@ import { useAuthStore } from './store/auth';
 import Login from './pages/Login';
 import EmployeeDashboard from './pages/EmployeeDashboard';
 import ManagerDashboard from './pages/ManagerDashboard';
+import ManagerTaskDetails from './pages/ManagerTaskDetails';
 import Layout from './components/Layout';
 
 function ProtectedRoute({ children, allowedRoles }: { children: ReactNode, allowedRoles: string[] }) {
@@ -49,6 +50,12 @@ export default function App() {
           <Route path="manager" element={
             <ProtectedRoute allowedRoles={['MANAGER', 'ADMIN']}>
               <ManagerDashboard />
+            </ProtectedRoute>
+          } />
+
+          <Route path="manager/task/:taskId" element={
+            <ProtectedRoute allowedRoles={['MANAGER', 'ADMIN']}>
+              <ManagerTaskDetails />
             </ProtectedRoute>
           } />
         </Route>

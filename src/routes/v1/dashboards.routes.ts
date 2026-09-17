@@ -78,19 +78,10 @@ export default async function dashboardsRoutes(fastify: FastifyInstance) {
       const zonedNow = toZonedTime(new Date(), timezone);
       const todayStr = format(zonedNow, 'yyyy-MM-dd', { timeZone: timezone });
 
-      // Just for a snapshot, let's fetch morning/evening review states for each
+      // Just for a snapshot, let's fetch historical review states for each
       const teamData = await Promise.all(
         employees.map(async (emp) => {
-          const morning = await DailyReviewRepository.findByEmployeeAndDate(
-            emp.id,
-            todayStr,
-            'MORNING'
-          );
-          const evening = await DailyReviewRepository.findByEmployeeAndDate(
-            emp.id,
-            todayStr,
-            'EVENING'
-          );
+          const allReviews = await DailyReviewRepository.findAllByEmployeeId(emp.id);
 
           const empTasks = employeeTasks.find((et) => et.employee.id === emp.id)?.tasks || [];
 
@@ -100,7 +91,7 @@ export default async function dashboardsRoutes(fastify: FastifyInstance) {
             display_name: emp.display_name,
             microsoft_id: emp.microsoft_id,
             clickup_id: emp.clickup_id,
-            reviews: { morning, evening },
+            reviews: allReviews,
             tasks: empTasks
           };
         })
