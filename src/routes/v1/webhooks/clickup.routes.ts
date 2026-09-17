@@ -7,7 +7,7 @@ import { WebhookProcessor } from '../../../services/clickup/webhook-processor.js
 
 export default async function clickUpWebhookRoutes(fastify: FastifyInstance) {
   fastify.post(
-    '/clickup',
+    '/',
     { config: { rawBody: true } },
     async (request: FastifyRequest, reply: FastifyReply) => {
       // 1. Verify HMAC Signature
