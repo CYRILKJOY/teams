@@ -62,7 +62,7 @@ export default function EmployeeDashboard() {
 
   const getTaskStatus = (task: Task) => {
     if (!task.due_date) return 'upcoming';
-    const dueDate = new Date(Number(task.due_date));
+    const dueDate = new Date(task.due_date);
     if (isPast(dueDate) && !isToday(dueDate)) return 'overdue';
     if (isToday(dueDate)) return 'today';
     return 'upcoming';
@@ -142,7 +142,7 @@ export default function EmployeeDashboard() {
                   {task.due_date && (
                     <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
                       <Clock size={14} />
-                      Due {format(new Date(Number(task.due_date)), 'MMM d, yyyy')}
+                      Due {format(new Date(task.due_date), 'MMM d, yyyy')}
                     </span>
                   )}
                   <span>ID: {task.clickup_task_id}</span>

@@ -67,7 +67,7 @@ export default function ManagerDashboard() {
     totalTasks += emp.tasks.length;
     overdueTasks += emp.tasks.filter(t => {
       if (!t.due_date || t.status.toLowerCase() === 'closed') return false;
-      return new Date(Number(t.due_date)) < new Date();
+      return new Date(t.due_date) < new Date();
     }).length;
     if (emp.reviews.morning) completedReviews++;
   });
@@ -177,7 +177,7 @@ export default function ManagerDashboard() {
                         <span className="badge badge-default" style={{ fontSize: '0.65rem' }}>{task.status}</span>
                       </div>
                       <div style={{ display: 'flex', gap: '1rem', alignItems: 'center', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
-                        {task.due_date && <span><Clock size={12} style={{ display: 'inline', marginRight: '4px', verticalAlign: '-2px' }}/> {format(new Date(Number(task.due_date)), 'MMM d')}</span>}
+                        {task.due_date && <span><Clock size={12} style={{ display: 'inline', marginRight: '4px', verticalAlign: '-2px' }}/> {format(new Date(task.due_date), 'MMM d')}</span>}
                         <span>#{task.clickup_task_id}</span>
                       </div>
                     </div>
